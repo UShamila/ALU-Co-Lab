@@ -1,0 +1,362 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+import '../../../core/theme/app_colors.dart';
+import '../../../shared/models/opportunity_model.dart';
+import '../providers/feed_provider.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../../notifications/providers/notification_provider.dart';
+
+class FeedScreen extends ConsumerWidget {
+  const FeedScreen({super.key});
+
+  String _greeting() {
+    final h = DateTime.now().hour;
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final filteredAsync = ref.watch(filteredOpportunitiesProvider);
+    final selectedFilter = ref.watch(feedFilterProvider);
+    final user = ref.watch(currentUserProvider);
+    final registeredIds = ref.watch(userRegisteredIdsProvider).valueOrNull ?? {};
+    final filters = ['All', 'Hackathon', 'Peer Study', 'Club Project'];
+
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: SafeArea(
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(child: _buildHeader(context, ref, user?.firstName ?? 'there')),
+            SliverToBoxAdapter(child: _buildFilterRow(ref, selectedFilter, filters)),
+            filteredAsync.when(
+              loading: () => const SliverFillRemaining(
+                child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+              ),
+              error: (e, _) => SliverFillRemaining(
+                child: Center(child: Text('Error: $e', style: const TextStyle(color: AppColors.error))),
+              ),
+              data: (opps) => opps.isEmpty
+                  ? SliverFillRemaining(child: _buildEmpty(context))
+                  : SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (ctx, i) => Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _OpportunityCard(
+                              opportunity: opps[i],
+                              isRegistered: registeredIds.contains(opps[i].id),
+                            ),
+                          ),
+                          childCount: opps.length,
+                        ),
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(BuildContext context, WidgetRef ref, String firstName) {
+    final unread = ref.watch(unreadNotificationCountProvider);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text('${_greeting()}, $firstName 👋',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          GestureDetector(
+            onTap: () => context.push('/notifications'),
+            child: Stack(
+              children: [
+                const Icon(Icons.notifications_outlined, size: 26, color: AppColors.textPrimary),
+                if (unread > 0)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                          color: AppColors.primary, shape: BoxShape.circle),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterRow(WidgetRef ref, String selected, List<String> filters) {
+    return SizedBox(
+      height: 52,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        itemCount: filters.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final f = filters[i];
+          final isSelected = f == selected;
+          return GestureDetector(
+            onTap: () => ref.read(feedFilterProvider.notifier).state = f,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              decoration: BoxDecoration(
+                color: isSelected ? AppColors.primary : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: isSelected ? AppColors.primary : AppColors.border),
+              ),
+              child: Text(f,
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: isSelected ? Colors.white : AppColors.textPrimary)),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildEmpty(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 88,
+              height: 88,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.location_on_outlined,
+                  size: 44, color: Colors.grey.shade400),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'No sessions found',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Be an Entrepreneurial Leader — start one!',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+            ),
+            const SizedBox(height: 28),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: () => context.push('/create-opportunity'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+                child: const Text(
+                  'Create Session',
+                  style: TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OpportunityCard extends ConsumerWidget {
+  final OpportunityModel opportunity;
+  final bool isRegistered;
+  const _OpportunityCard({required this.opportunity, this.isRegistered = false});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border(left: BorderSide(color: _typeColor(opportunity.type), width: 4)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          )
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _Avatar(initial: opportunity.postedByInitial),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(opportunity.title,
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 2),
+                      Text(opportunity.description,
+                          style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Posted by ${opportunity.postedBy}${opportunity.yearLabel != null ? " · ${opportunity.yearLabel}" : ""}',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+            ),
+            const SizedBox(height: 8),
+            _buildDateRow(),
+            if (opportunity.skillTags.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Wrap(spacing: 6, children: opportunity.skillTags.map(_SkillTag.new).toList()),
+            ],
+            const SizedBox(height: 12),
+            _buildJoinButton(ref),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDateRow() {
+    if (opportunity.isDateRolling) return const _DateChip(label: 'Rolling');
+    if (opportunity.eventDate == null) return const SizedBox.shrink();
+    final now = DateTime.now();
+    final isToday = opportunity.eventDate!.day == now.day &&
+        opportunity.eventDate!.month == now.month;
+    final label = isToday
+        ? 'Today · ${DateFormat.jm().format(opportunity.eventDate!)}'
+        : DateFormat('EEE d MMM').format(opportunity.eventDate!);
+    return _DateChip(label: label);
+  }
+
+  Widget _buildJoinButton(WidgetRef ref) {
+    if (isRegistered) {
+      final label = opportunity.type == 'Peer Study' ? 'Registered ✓' : 'Requested ✓';
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        decoration: BoxDecoration(
+            color: AppColors.chipBackground,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.border)),
+        child: Center(
+          child: Text(label,
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey.shade500)),
+        ),
+      );
+    }
+
+    final isTeal = opportunity.type == 'Peer Study';
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: () async {
+          final actions = ref.read(feedActionsProvider);
+          if (actions == null) return;
+          try {
+            await actions.rsvp(opportunity.id);
+          } catch (e) {
+            // Error handled by provider
+          }
+        },
+        style: ElevatedButton.styleFrom(
+          backgroundColor: isTeal ? AppColors.teal : AppColors.primary,
+          minimumSize: const Size(double.infinity, 44),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+        child: Text(
+          opportunity.type == 'Peer Study' ? 'RSVP' : 'Request to Join',
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white),
+        ),
+      ),
+    );
+  }
+
+  Color _typeColor(String type) {
+    switch (type) {
+      case 'Hackathon': return AppColors.primary;
+      case 'Peer Study': return AppColors.teal;
+      case 'Club Project': return AppColors.amber;
+      default: return AppColors.primary;
+    }
+  }
+}
+
+class _Avatar extends StatelessWidget {
+  final String initial;
+  const _Avatar({required this.initial});
+  @override
+  Widget build(BuildContext context) {
+    return CircleAvatar(
+      radius: 20,
+      backgroundColor: AppColors.chipBackground,
+      child: Text(initial,
+          style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+    );
+  }
+}
+
+class _SkillTag extends StatelessWidget {
+  final String label;
+  const _SkillTag(this.label);
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(color: AppColors.tealLight, borderRadius: BorderRadius.circular(20)),
+      child: Text(label,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.teal)),
+    );
+  }
+}
+
+class _DateChip extends StatelessWidget {
+  final String label;
+  const _DateChip({required this.label});
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.calendar_today_outlined, size: 13, color: AppColors.textSecondary),
+        const SizedBox(width: 4),
+        Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+      ],
+    );
+  }
+}
