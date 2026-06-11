@@ -1,0 +1,131 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../repositories/clan_repository.dart';
+import '../../../shared/models/clan_model.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../../../core/database/database_service.dart';
+
+// ── Repository ────────────────────────────────────────────────────────────────
+
+final clanRepositoryProvider =
+    Provider<ClanRepository>((ref) => ClanRepository());
+
+// ── User's clans (live stream) ────────────────────────────────────────────────
+
+final userClansProvider = StreamProvider<List<ClanModel>>((ref) {
+  final userId = ref.watch(currentUserProvider)?.id;
+  if (userId == null) return const Stream.empty();
+  return ref.watch(clanRepositoryProvider).watchUserClans(userId);
+});
+
+// ── All clans (browse) ────────────────────────────────────────────────────────
+
+final allClansProvider = StreamProvider<List<ClanModel>>((ref) {
+  return ref.watch(clanRepositoryProvider).watchAllClans();
+});
+
+// ── Is the current user a member of a specific clan ───────────────────────────
+
+final isMemberOfClanProvider = FutureProvider.family<bool, String>((ref, clanId) async {
+  final userId = ref.watch(currentUserProvider)?.id;
+  if (userId == null) return false;
+  final db = await DatabaseService.instance.database;
+  final rows = await db.query('clan_members',
+      where: 'clanId = ? AND userId = ?', whereArgs: [clanId, userId]);
+  return rows.isNotEmpty;
+});
+
+// ── Messages for a specific clan (live stream) ────────────────────────────────
+
+final clanMessagesProvider =
+    StreamProvider.family<List<ClanMessage>, String>((ref, clanId) {
+  final userId = ref.watch(currentUserProvider)?.id ?? '';
+  return ref.watch(clanRepositoryProvider).watchMessages(clanId, userId);
+});
+
+// ── Single clan — checks user's clans first, falls back to all clans ─────────
+
+final selectedClanProvider =
+    Provider.family<ClanModel?, String>((ref, clanId) {
+  // Try joined clans first (fastest)
+  final fromJoined = ref.watch(userClansProvider).whenData((clans) {
+    try { return clans.firstWhere((c) => c.id == clanId); } catch (_) { return null; }
+  }).valueOrNull;
+  if (fromJoined != null) return fromJoined;
+
+  // Fall back to full list (covers non-member browsing)
+  return ref.watch(allClansProvider).whenData((clans) {
+    try { return clans.firstWhere((c) => c.id == clanId); } catch (_) { return null; }
+  }).valueOrNull;
+});
+
+// ── Chat actions ──────────────────────────────────────────────────────────────
+
+class ClanChatNotifier extends StateNotifier<AsyncValue<void>> {
+  ClanChatNotifier(this._repo) : super(const AsyncData(null));
+  final ClanRepository _repo;
+
+  Future<void> send({
+    required String clanId,
+    required String senderId,
+    required String senderName,
+    required String content,
+    String? imageUrl,
+  }) async {
+    try {
+      await _repo.sendMessage(
+        clanId: clanId,
+        senderId: senderId,
+        senderName: senderName,
+        content: content,
+        imageUrl: imageUrl,
+      );
+    } catch (e, st) {
+      state = AsyncError(e, st);
+    }
+  }
+
+  Future<void> joinClan({required String clanId, required String userId}) async {
+    state = const AsyncLoading();
+    try {
+      await _repo.joinClan(clanId: clanId, userId: userId);
+      state = const AsyncData(null);
+    } catch (e, st) {
+      state = AsyncError(e, st);
+    }
+  }
+
+  Future<void> leaveClan({required String clanId, required String userId}) async {
+    state = const AsyncLoading();
+    try {
+      await _repo.leaveClan(clanId: clanId, userId: userId);
+      state = const AsyncData(null);
+    } catch (e, st) {
+      state = AsyncError(e, st);
+    }
+  }
+
+  Future<void> createClan({
+    required String name,
+    required String description,
+    required String category,
+    required String ownerId,
+  }) async {
+    state = const AsyncLoading();
+    try {
+      await _repo.createClan(
+        name: name,
+        description: description,
+        category: category,
+        ownerId: ownerId,
+      );
+      state = const AsyncData(null);
+    } catch (e, st) {
+      state = AsyncError(e, st);
+    }
+  }
+}
+
+final clanActionsProvider =
+    StateNotifierProvider<ClanChatNotifier, AsyncValue<void>>(
+  (ref) => ClanChatNotifier(ref.read(clanRepositoryProvider)),
+);
